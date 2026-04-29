@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'windows' }
+    agent { label 'Built-In Node' }
 
     options {
         timestamps()
