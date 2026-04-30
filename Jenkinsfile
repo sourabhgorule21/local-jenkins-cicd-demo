@@ -76,21 +76,25 @@ pipeline {
                 $startArgs = "/c start `"`" /min cmd /c $launchCmd"
                 Start-Process -FilePath "cmd.exe" -ArgumentList $startArgs -WindowStyle Hidden | Out-Null
 
-                Start-Sleep -Seconds 2
-
-                $appProc = Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
-                    Where-Object { $_.CommandLine -and $_.CommandLine -like "*$($jarFile.Name)*" } |
-                    Sort-Object CreationDate -Descending |
-                    Select-Object -First 1
-
-                if (-not $appProc) {
-                    if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
-                    if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
-                    throw "Started process could not be detected for JAR $($jarFile.Name)."
+                $appPid = $null
+                for ($i = 0; $i -lt 30; $i++) {
+                    $listener = Get-NetTCPConnection -LocalPort ([int]$env:APP_PORT) -State Listen -ErrorAction SilentlyContinue |
+                        Select-Object -First 1
+                    if ($listener) {
+                        $appPid = $listener.OwningProcess
+                        break
+                    }
+                    Start-Sleep -Seconds 1
                 }
 
-                Set-Content -Path $env:PID_FILE -Value $appProc.ProcessId -Encoding ascii
-                Write-Host "Started $env:APP_NAME using JAR: $($jarFile.Name), PID: $($appProc.ProcessId)"
+                if (-not $appPid) {
+                    if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
+                    if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
+                    throw "Started process did not open port $($env:APP_PORT) in time."
+                }
+
+                Set-Content -Path $env:PID_FILE -Value $appPid -Encoding ascii
+                Write-Host "Started $env:APP_NAME using JAR: $($jarFile.Name), PID: $appPid"
                 '''
             }
         }
