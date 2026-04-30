@@ -72,17 +72,25 @@ pipeline {
                 }
 
                 $env:SERVER_PORT = "$env:APP_PORT"
+                $launchCmd = "`"$javaExe`" -jar `"$($jarFile.FullName)`" 1>>`"$env:LOG_OUT_FILE`" 2>>`"$env:LOG_ERR_FILE`""
+                $startArgs = "/c start `"`" /min cmd /c $launchCmd"
+                Start-Process -FilePath "cmd.exe" -ArgumentList $startArgs -WindowStyle Hidden | Out-Null
 
-                $proc = Start-Process -FilePath $javaExe `
-                    -ArgumentList @("-jar", $jarFile.FullName) `
-                    -WorkingDirectory $env:WORKSPACE `
-                    -RedirectStandardOutput $env:LOG_OUT_FILE `
-                    -RedirectStandardError $env:LOG_ERR_FILE `
-                    -PassThru `
-                    -WindowStyle Hidden
+                Start-Sleep -Seconds 2
 
-                Set-Content -Path $env:PID_FILE -Value $proc.Id -Encoding ascii
-                Write-Host "Started $env:APP_NAME using JAR: $($jarFile.Name), PID: $($proc.Id)"
+                $appProc = Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
+                    Where-Object { $_.CommandLine -and $_.CommandLine -like "*$($jarFile.Name)*" } |
+                    Sort-Object CreationDate -Descending |
+                    Select-Object -First 1
+
+                if (-not $appProc) {
+                    if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
+                    if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
+                    throw "Started process could not be detected for JAR $($jarFile.Name)."
+                }
+
+                Set-Content -Path $env:PID_FILE -Value $appProc.ProcessId -Encoding ascii
+                Write-Host "Started $env:APP_NAME using JAR: $($jarFile.Name), PID: $($appProc.ProcessId)"
                 '''
             }
         }
