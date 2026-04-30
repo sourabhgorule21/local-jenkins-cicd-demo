@@ -102,9 +102,13 @@ pipeline {
                     throw "Application process is not running (PID $appPid)."
                 }
 
-                $healthUrl = "http://127.0.0.1:$($env:APP_PORT)/api/message"
+                $healthUrl = "http://127.0.0.1:$($env:APP_PORT)/actuator/health"
+                $maxWaitSec = 120
+                $sleepSec = 2
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                $lastError = $null
 
-                for ($i = 0; $i -lt 60; $i++) {
+                while ($sw.Elapsed.TotalSeconds -lt $maxWaitSec) {
                     $running = Get-Process -Id $appPid -ErrorAction SilentlyContinue
                     if (-not $running) {
                         Write-Host "Application process exited before becoming ready."
@@ -115,17 +119,20 @@ pipeline {
 
                     try {
                         $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
-                        if ($response.StatusCode -eq 200) {
+                        if ($response.StatusCode -eq 200 -and $response.Content -match '"status"\\s*:\\s*"UP"') {
                             Write-Host "Application is ready on $healthUrl (PID: $appPid)."
                             exit 0
                         }
                     } catch {
-                        # App may still be starting; keep polling.
+                        $lastError = $_.Exception.Message
                     }
 
-                    Start-Sleep -Seconds 2
+                    $elapsed = [int]$sw.Elapsed.TotalSeconds
+                    Write-Host "Waiting for app readiness... ${elapsed}s elapsed."
+                    Start-Sleep -Seconds $sleepSec
                 }
 
+                if ($lastError) { Write-Host "Last health-check error: $lastError" }
                 if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
                 if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
                 throw "Application did not become ready within timeout at $healthUrl."
