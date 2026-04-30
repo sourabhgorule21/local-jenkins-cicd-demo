@@ -8,11 +8,7 @@ pipeline {
 
     environment {
         APP_NAME = 'demo-app'
-        DB_CREDENTIALS_ID = 'mysql-db-creds'
         APP_PORT = '9090'
-        DB_HOST = '127.0.0.1'
-        DB_PORT = '3306'
-        DB_NAME = 'nmmc'
         DEPLOY_DIR = 'D:\\Deployment\\demo'
         PID_FILE = 'D:\\Deployment\\demo\\demo-app.pid'
         LOG_OUT_FILE = 'D:\\Deployment\\demo\\demo-app.out.log'
@@ -23,24 +19,6 @@ pipeline {
         stage('Checkout Source') {
             steps {
                 checkout scm
-            }
-        }
-
-        stage('Load DB Credentials') {
-            steps {
-                script {
-                    if (!env.DB_USERNAME?.trim() || !env.DB_PASSWORD?.trim()) {
-                        try {
-                            withCredentials([usernamePassword(credentialsId: env.DB_CREDENTIALS_ID, usernameVariable: 'DB_USER_FROM_JENKINS', passwordVariable: 'DB_PASS_FROM_JENKINS')]) {
-                                env.DB_USERNAME = env.DB_USER_FROM_JENKINS
-                                env.DB_PASSWORD = env.DB_PASS_FROM_JENKINS
-                            }
-                            echo "Using DB credentials from Jenkins credentials ID: ${env.DB_CREDENTIALS_ID}"
-                        } catch (Exception ignored) {
-                            error("DB credentials missing. Set DB_USERNAME/DB_PASSWORD env vars, or create a Username/Password credential with ID '${env.DB_CREDENTIALS_ID}'.")
-                        }
-                    }
-                }
             }
         }
 
@@ -93,11 +71,6 @@ pipeline {
                     throw "Java not found. Set JAVA_HOME or ensure java is on PATH."
                 }
 
-                $env:DB_HOST = "$env:DB_HOST"
-                $env:DB_PORT = "$env:DB_PORT"
-                $env:DB_NAME = "$env:DB_NAME"
-                $env:DB_USERNAME = "$env:DB_USERNAME"
-                $env:DB_PASSWORD = "$env:DB_PASSWORD"
                 $env:SERVER_PORT = "$env:APP_PORT"
 
                 $proc = Start-Process -FilePath $javaExe `
