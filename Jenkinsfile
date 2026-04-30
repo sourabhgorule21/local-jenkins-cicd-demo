@@ -102,16 +102,33 @@ pipeline {
                     throw "Application process is not running (PID $appPid)."
                 }
 
-                for ($i = 0; $i -lt 30; $i++) {
-                    $listener = Get-NetTCPConnection -LocalPort ([int]$env:APP_PORT) -State Listen -ErrorAction SilentlyContinue
-                    if ($listener) {
-                        Write-Host "Application is listening on port $env:APP_PORT (PID: $appPid)."
-                        exit 0
+                $healthUrl = "http://127.0.0.1:$($env:APP_PORT)/api/message"
+
+                for ($i = 0; $i -lt 60; $i++) {
+                    $running = Get-Process -Id $appPid -ErrorAction SilentlyContinue
+                    if (-not $running) {
+                        Write-Host "Application process exited before becoming ready."
+                        if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
+                        if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
+                        throw "Application process is not running (PID $appPid)."
                     }
+
+                    try {
+                        $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
+                        if ($response.StatusCode -eq 200) {
+                            Write-Host "Application is ready on $healthUrl (PID: $appPid)."
+                            exit 0
+                        }
+                    } catch {
+                        # App may still be starting; keep polling.
+                    }
+
                     Start-Sleep -Seconds 2
                 }
 
-                throw "Application did not start listening on port $env:APP_PORT within timeout."
+                if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
+                if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
+                throw "Application did not become ready within timeout at $healthUrl."
                 '''
             }
         }
