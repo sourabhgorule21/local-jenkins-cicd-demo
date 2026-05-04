@@ -31,9 +31,9 @@ pipeline {
                     ($_ -split "\\s+")[-1]
                 } | Where-Object { $_ -match "^[0-9]+$" } | Sort-Object -Unique
 
-                foreach ($pid in $portPids) {
-                    Write-Host "Stopping PID $pid listening on port $appPort"
-                    Stop-Process -Id ([int]$pid) -Force -ErrorAction SilentlyContinue
+                foreach ($procId in $portPids) {
+                    Write-Host "Stopping PID $procId listening on port $appPort"
+                    Stop-Process -Id ([int]$procId) -Force -ErrorAction SilentlyContinue
                 }
 
                 $jarPids = Get-CimInstance Win32_Process |
@@ -43,9 +43,9 @@ pipeline {
                     } |
                     Select-Object -ExpandProperty ProcessId -Unique
 
-                foreach ($pid in $jarPids) {
-                    Write-Host "Stopping deployment java PID $pid"
-                    Stop-Process -Id ([int]$pid) -Force -ErrorAction SilentlyContinue
+                foreach ($procId in $jarPids) {
+                    Write-Host "Stopping deployment java PID $procId"
+                    Stop-Process -Id ([int]$procId) -Force -ErrorAction SilentlyContinue
                 }
                 '''
             }
