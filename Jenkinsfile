@@ -19,6 +19,38 @@ pipeline {
             }
         }
 
+        stage('Stop Running App') {
+            steps {
+                powershell '''
+                $ErrorActionPreference = "Stop"
+
+                $appPort = 9090
+                Write-Host "Checking running process on port $appPort..."
+
+                $portPids = netstat -ano | Select-String ":$appPort\\s+.*LISTENING" | ForEach-Object {
+                    ($_ -split "\\s+")[-1]
+                } | Where-Object { $_ -match "^[0-9]+$" } | Sort-Object -Unique
+
+                foreach ($pid in $portPids) {
+                    Write-Host "Stopping PID $pid listening on port $appPort"
+                    Stop-Process -Id ([int]$pid) -Force -ErrorAction SilentlyContinue
+                }
+
+                $jarPids = Get-CimInstance Win32_Process |
+                    Where-Object {
+                        $_.Name -eq "java.exe" -and
+                        $_.CommandLine -like "*D:\\Deployment\\demo\\*.jar*"
+                    } |
+                    Select-Object -ExpandProperty ProcessId -Unique
+
+                foreach ($pid in $jarPids) {
+                    Write-Host "Stopping deployment java PID $pid"
+                    Stop-Process -Id ([int]$pid) -Force -ErrorAction SilentlyContinue
+                }
+                '''
+            }
+        }
+
         stage('Backup Old JAR') {
             steps {
                 powershell '''
@@ -32,7 +64,7 @@ pipeline {
                     $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
                     foreach ($jar in $existingJars) {
                         $backupJar = Join-Path $env:BACKUP_DIR ($jar.BaseName + "_" + $timestamp + $jar.Extension)
-                        Move-Item -Path $jar.FullName -Destination $backupJar -Force
+                        Copy-Item -Path $jar.FullName -Destination $backupJar -Force
                         Write-Host "Old JAR backed up to: $backupJar"
                     }
                 } else {
@@ -76,3 +108,4 @@ pipeline {
         }
     }
 }
+
