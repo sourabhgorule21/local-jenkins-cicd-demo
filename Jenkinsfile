@@ -58,20 +58,19 @@ pipeline {
                 $destination = Join-Path $env:DEPLOY_DIR $env:DEPLOY_JAR
                 Copy-Item -Path $newJar.FullName -Destination $destination -Force
                 Write-Host "Deployed JAR to: $destination"
-
-                $runBatSource = Join-Path $env:WORKSPACE "run.bat"
-                if (-not (Test-Path $runBatSource)) {
-                    throw "run.bat not found in workspace: $runBatSource"
-                }
-                Copy-Item -Path $runBatSource -Destination (Join-Path $env:DEPLOY_DIR "run.bat") -Force
-                Write-Host "Copied run.bat to deployment folder."
                 '''
             }
         }
 
         stage('Run Application') {
             steps {
-                bat 'call "D:\\Deployment\\demo\\run.bat"'
+                bat '''
+                if not exist "D:\\Deployment\\demo\\run.bat" (
+                    echo run.bat not found in D:\\Deployment\\demo
+                    exit /b 1
+                )
+                call "D:\\Deployment\\demo\\run.bat"
+                '''
             }
         }
     }
