@@ -1,12 +1,6 @@
 pipeline {
     agent any
 
-    parameters {
-        string(name: 'GIT_REPO_URL', defaultValue: 'https://github.com/your-org/your-repo.git', description: 'Git repository URL')
-        string(name: 'GIT_BRANCH', defaultValue: 'main', description: 'Git branch to build')
-        string(name: 'GIT_CREDENTIALS_ID', defaultValue: '', description: 'Optional Jenkins Git credentials ID')
-    }
-
     environment {
         DEPLOY_DIR = 'D:\\Deployment\\demo'
         BACKUP_DIR = 'D:\\Deployment\\demo\\backup'
@@ -16,19 +10,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                script {
-                    def remoteConfig = [url: params.GIT_REPO_URL]
-                    if (params.GIT_CREDENTIALS_ID?.trim()) {
-                        remoteConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
-                    }
-
-                    checkout([$class: 'GitSCM',
-                        branches: [[name: "*/${params.GIT_BRANCH}"]],
-                        doGenerateSubmoduleConfigurations: false,
-                        extensions: [],
-                        userRemoteConfigs: [remoteConfig]
-                    ])
-                }
+                checkout scm
             }
         }
 
