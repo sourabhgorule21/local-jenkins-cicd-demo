@@ -4,7 +4,6 @@ pipeline {
     environment {
         DEPLOY_DIR = 'D:\\Deployment\\demo'
         BACKUP_DIR = 'D:\\Deployment\\demo\\backup'
-        DEPLOY_JAR = 'myapp.jar'
     }
 
     stages {
@@ -28,12 +27,14 @@ pipeline {
                 New-Item -Path $env:DEPLOY_DIR -ItemType Directory -Force | Out-Null
                 New-Item -Path $env:BACKUP_DIR -ItemType Directory -Force | Out-Null
 
-                $currentJar = Join-Path $env:DEPLOY_DIR $env:DEPLOY_JAR
-                if (Test-Path $currentJar) {
+                $existingJars = Get-ChildItem -Path $env:DEPLOY_DIR -Filter "*.jar" -File -ErrorAction SilentlyContinue
+                if ($existingJars) {
                     $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-                    $backupJar = Join-Path $env:BACKUP_DIR ("myapp_" + $timestamp + ".jar")
-                    Move-Item -Path $currentJar -Destination $backupJar -Force
-                    Write-Host "Old JAR backed up to: $backupJar"
+                    foreach ($jar in $existingJars) {
+                        $backupJar = Join-Path $env:BACKUP_DIR ($jar.BaseName + "_" + $timestamp + $jar.Extension)
+                        Move-Item -Path $jar.FullName -Destination $backupJar -Force
+                        Write-Host "Old JAR backed up to: $backupJar"
+                    }
                 } else {
                     Write-Host "No existing JAR found to back up."
                 }
@@ -55,7 +56,7 @@ pipeline {
                     throw "No JAR file found in $env:WORKSPACE\\target"
                 }
 
-                $destination = Join-Path $env:DEPLOY_DIR $env:DEPLOY_JAR
+                $destination = Join-Path $env:DEPLOY_DIR $newJar.Name
                 Copy-Item -Path $newJar.FullName -Destination $destination -Force
                 Write-Host "Deployed JAR to: $destination"
                 '''
