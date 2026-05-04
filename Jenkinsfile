@@ -1,154 +1,95 @@
 pipeline {
     agent any
 
-    options {
-        skipDefaultCheckout(true)
-        timestamps()
+    parameters {
+        string(name: 'GIT_REPO_URL', defaultValue: 'https://github.com/your-org/your-repo.git', description: 'Git repository URL')
+        string(name: 'GIT_BRANCH', defaultValue: 'main', description: 'Git branch to build')
+        string(name: 'GIT_CREDENTIALS_ID', defaultValue: '', description: 'Optional Jenkins Git credentials ID')
     }
 
     environment {
-        APP_NAME = 'demo-app'
-        APP_PORT = '9090'
         DEPLOY_DIR = 'D:\\Deployment\\demo'
-        PID_FILE = 'D:\\Deployment\\demo\\demo-app.pid'
-        LOG_OUT_FILE = 'D:\\Deployment\\demo\\demo-app.out.log'
-        LOG_ERR_FILE = 'D:\\Deployment\\demo\\demo-app.err.log'
+        BACKUP_DIR = 'D:\\Deployment\\demo\\backup'
+        DEPLOY_JAR = 'myapp.jar'
     }
 
     stages {
-        stage('Checkout Source') {
+        stage('Checkout') {
             steps {
-                checkout scm
+                script {
+                    def remoteConfig = [url: params.GIT_REPO_URL]
+                    if (params.GIT_CREDENTIALS_ID?.trim()) {
+                        remoteConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
+                    }
+
+                    checkout([$class: 'GitSCM',
+                        branches: [[name: "*/${params.GIT_BRANCH}"]],
+                        doGenerateSubmoduleConfigurations: false,
+                        extensions: [],
+                        userRemoteConfigs: [remoteConfig]
+                    ])
+                }
             }
         }
 
-        stage('Build JAR (Maven)') {
+        stage('Build JAR') {
             steps {
-                bat 'call mvn -B -ntp -DskipTests clean package'
+                bat 'call mvn clean package -DskipTests'
             }
         }
 
-        stage('Deploy Locally') {
+        stage('Backup Old JAR') {
             steps {
                 powershell '''
                 $ErrorActionPreference = "Stop"
 
                 New-Item -Path $env:DEPLOY_DIR -ItemType Directory -Force | Out-Null
+                New-Item -Path $env:BACKUP_DIR -ItemType Directory -Force | Out-Null
 
-                $jarFile = Get-ChildItem -Path "$env:WORKSPACE\\target" -Filter "*.jar" -File |
-                    Where-Object { $_.Name -notlike "*.original" } |
-                    Sort-Object LastWriteTime -Descending |
-                    Select-Object -First 1
-
-                if (-not $jarFile) {
-                    throw "No runnable JAR found in $env:WORKSPACE\\target"
+                $currentJar = Join-Path $env:DEPLOY_DIR $env:DEPLOY_JAR
+                if (Test-Path $currentJar) {
+                    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+                    $backupJar = Join-Path $env:BACKUP_DIR ("myapp_" + $timestamp + ".jar")
+                    Move-Item -Path $currentJar -Destination $backupJar -Force
+                    Write-Host "Old JAR backed up to: $backupJar"
+                } else {
+                    Write-Host "No existing JAR found to back up."
                 }
-
-                if (Test-Path $env:PID_FILE) {
-                    $oldPid = Get-Content $env:PID_FILE -ErrorAction SilentlyContinue
-                    if ($oldPid -and (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) {
-                        Stop-Process -Id $oldPid -Force
-                        Start-Sleep -Seconds 2
-                    }
-                    Remove-Item $env:PID_FILE -Force -ErrorAction SilentlyContinue
-                }
-
-                $listener = Get-NetTCPConnection -LocalPort ([int]$env:APP_PORT) -State Listen -ErrorAction SilentlyContinue
-                if ($listener) {
-                    throw "Port $($env:APP_PORT) is already in use by PID $($listener.OwningProcess). Stop that process and retry."
-                }
-
-                $javaExe = $null
-                if ($env:JAVA_HOME) {
-                    $candidate = Join-Path $env:JAVA_HOME 'bin\\java.exe'
-                    if (Test-Path $candidate) { $javaExe = $candidate }
-                }
-                if (-not $javaExe) {
-                    $javaCmd = Get-Command java -ErrorAction SilentlyContinue
-                    if ($javaCmd) { $javaExe = $javaCmd.Source }
-                }
-                if (-not $javaExe) {
-                    throw "Java not found. Set JAVA_HOME or ensure java is on PATH."
-                }
-
-                $env:SERVER_PORT = "$env:APP_PORT"
-                $launchCmd = "`"$javaExe`" -jar `"$($jarFile.FullName)`" 1>>`"$env:LOG_OUT_FILE`" 2>>`"$env:LOG_ERR_FILE`""
-                $startArgs = "/c start `"`" /min cmd /c $launchCmd"
-                Start-Process -FilePath "cmd.exe" -ArgumentList $startArgs -WindowStyle Hidden | Out-Null
-
-                $appPid = $null
-                for ($i = 0; $i -lt 30; $i++) {
-                    $listener = Get-NetTCPConnection -LocalPort ([int]$env:APP_PORT) -State Listen -ErrorAction SilentlyContinue |
-                        Select-Object -First 1
-                    if ($listener) {
-                        $appPid = $listener.OwningProcess
-                        break
-                    }
-                    Start-Sleep -Seconds 1
-                }
-
-                if (-not $appPid) {
-                    if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
-                    if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
-                    throw "Started process did not open port $($env:APP_PORT) in time."
-                }
-
-                Set-Content -Path $env:PID_FILE -Value $appPid -Encoding ascii
-                Write-Host "Started $env:APP_NAME using JAR: $($jarFile.Name), PID: $appPid"
                 '''
             }
         }
 
-        stage('Verify Local Deployment') {
+        stage('Deploy New JAR') {
             steps {
                 powershell '''
                 $ErrorActionPreference = "Stop"
 
-                if (-not (Test-Path $env:PID_FILE)) {
-                    throw "PID file not found: $env:PID_FILE"
+                $newJar = Get-ChildItem -Path "$env:WORKSPACE\\target" -Filter "*.jar" -File |
+                    Where-Object { $_.Name -notlike "*.original" } |
+                    Sort-Object LastWriteTime -Descending |
+                    Select-Object -First 1
+
+                if (-not $newJar) {
+                    throw "No JAR file found in $env:WORKSPACE\\target"
                 }
 
-                $appPid = (Get-Content $env:PID_FILE).Trim()
-                $proc = Get-Process -Id $appPid -ErrorAction SilentlyContinue
-                if (-not $proc) {
-                    throw "Application process is not running (PID $appPid)."
+                $destination = Join-Path $env:DEPLOY_DIR $env:DEPLOY_JAR
+                Copy-Item -Path $newJar.FullName -Destination $destination -Force
+                Write-Host "Deployed JAR to: $destination"
+
+                $runBatSource = Join-Path $env:WORKSPACE "run.bat"
+                if (-not (Test-Path $runBatSource)) {
+                    throw "run.bat not found in workspace: $runBatSource"
                 }
-
-                $healthUrl = "http://127.0.0.1:$($env:APP_PORT)/actuator/health"
-                $maxWaitSec = 120
-                $sleepSec = 2
-                $sw = [System.Diagnostics.Stopwatch]::StartNew()
-                $lastError = $null
-
-                while ($sw.Elapsed.TotalSeconds -lt $maxWaitSec) {
-                    $running = Get-Process -Id $appPid -ErrorAction SilentlyContinue
-                    if (-not $running) {
-                        Write-Host "Application process exited before becoming ready."
-                        if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
-                        if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
-                        throw "Application process is not running (PID $appPid)."
-                    }
-
-                    try {
-                        $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 5
-                        if ($response.StatusCode -eq 200 -and $response.Content -match '"status"\\s*:\\s*"UP"') {
-                            Write-Host "Application is ready on $healthUrl (PID: $appPid)."
-                            exit 0
-                        }
-                    } catch {
-                        $lastError = $_.Exception.Message
-                    }
-
-                    $elapsed = [int]$sw.Elapsed.TotalSeconds
-                    Write-Host "Waiting for app readiness... ${elapsed}s elapsed."
-                    Start-Sleep -Seconds $sleepSec
-                }
-
-                if ($lastError) { Write-Host "Last health-check error: $lastError" }
-                if (Test-Path $env:LOG_ERR_FILE) { Get-Content $env:LOG_ERR_FILE -Tail 80 }
-                if (Test-Path $env:LOG_OUT_FILE) { Get-Content $env:LOG_OUT_FILE -Tail 80 }
-                throw "Application did not become ready within timeout at $healthUrl."
+                Copy-Item -Path $runBatSource -Destination (Join-Path $env:DEPLOY_DIR "run.bat") -Force
+                Write-Host "Copied run.bat to deployment folder."
                 '''
+            }
+        }
+
+        stage('Run Application') {
+            steps {
+                bat 'call "D:\\Deployment\\demo\\run.bat"'
             }
         }
     }
